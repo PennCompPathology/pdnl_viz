@@ -35,14 +35,15 @@ class MainWindow(QtWidgets.QMainWindow):
     RNG_SPIN_STEP = 0.5
     RESOURCE_PATH = os.path.join(os.path.dirname(__file__), "resources")
 
-    def __init__(self, tmp_directory=None, *args, **kwargs):
+    def __init__(self, tmp_directory=None, parameters_path="", *args, **kwargs):
         super().__init__(*args, **kwargs)
         if tmp_directory is None:
             self.temp_directory = tempfile.TemporaryDirectory()
             self.tmp_directory = self.temp_directory.name
         else:        
             self.tmp_directory = tmp_directory
-
+        self.parameters_path = parameters_path
+        
         self.widget = QtWidgets.QWidget()
         self.setCentralWidget(self.widget)
 
@@ -106,6 +107,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dab_widget = None
         self.cs_widget = None
 
+        self.logger = pdnl_sana.logging.Logger('normal', self.parameters_path)
+        print(self.logger.data)
+        self.set_default_parameters()
+        print(self.logger.data)
+        self.logger.data.update(self.logger.read_data())
+        print(self.logger.data)
+        
         self.show()
 
         self.automate_start()
@@ -123,10 +131,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
         return os.path.join(base_path, relative_path)
 
+    def set_default_parameters(self):
+        self.set_default_dab_parameters()
+        self.set_default_cs_parameters()
+
+    def set_default_dab_parameters(self):
+        self.logger.data['DAB_strictness'] = 0.0
+        self.logger.data['DAB_smoothing'] = False
+        self.logger.data['DAB_normalization'] = False
+        self.logger.data['DAB_morphology'] = False
+        self.logger.data['DAB_opening_radius'] = 0
+        self.logger.data['DAB_closing_radius'] = 0
+    def set_default_cs_parameters(self):
+        self.logger.data['CS_strictness'] = 0.0
+        self.logger.data['CS_smoothing'] = False
+        self.logger.data['CS_normalization'] = False
+        self.logger.data['CS_morphology'] = False
+        self.logger.data['CS_opening_radius'] = 0
+        self.logger.data['CS_closing_radius'] = 0
+
     def automate_start(self):
         pass
         self.showMaximized()
         self.tau_button.click()
+        self.dab_button.click()
         #self.roi_button.click()
         #self.overlay_button.click()
         #self.neuseg_button.click()
@@ -136,7 +164,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def load_slide(self, slide_path, staining_code):
         self.slide_path = slide_path
         self.slide_name = os.path.splitext(os.path.basename(self.slide_path))[0]
-        self.logger = pdnl_sana.logging.Logger('debug', 'x.pkl')
         self.loader = pdnl_sana.slide.Loader(self.logger, self.slide_path)
         self.staining_code = staining_code
         self.thumbnail_widget.set_slide(self.loader)
@@ -164,6 +191,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.neuseg_widget = None
             self.overlay_widget = None
         self.interactive_layout = QtWidgets.QVBoxLayout()
+
+    def add_save_button(self):
+        self.save_layout = QtWidgets.QHBoxLayout()
+        self.interactive_layout.addLayout(self.save_layout)
+
+        self.save_button = QtWidgets.QPushButton('Save Parameters')
+        self.save_layout.addWidget(self.save_button)
+        self.save_button.clicked.connect(self.save_parameters)
+
+    def save_parameters(self):
+        self.logger.write_data()
+        print(self.logger.data)
+        print(self.logger.fpath)
 
     def show_roi(self):
         self.reset_interactive()
@@ -198,7 +238,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.interactive_layout.addWidget(self.dab_widget, stretch=10)
         self.main_layout.addLayout(self.interactive_layout)
 
-        self.add_thresholding_widgets()
+        self.add_save_button()
+
+        self.add_thresholding_widgets('DAB')
+        self.add_morphology_widgets('DAB')
         
         self.update_stain()
 
@@ -210,8 +253,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.interactive_layout.addWidget(self.cs_widget, stretch=10)
         self.main_layout.addLayout(self.interactive_layout)
 
-        self.add_thresholding_widgets()
-        self.add_morphology_widgets()
+        self.add_save_button()
+
+        self.add_thresholding_widgets('CS')
+        self.add_morphology_widgets('CS')
         self.add_segment_widgets()
 
         self.update_stain()
@@ -260,7 +305,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.overlay_widget.set_slide(self.loader, self.staining_code)
         self.overlay_widget.plot_dab(reprocess=True)
 
-    def add_thresholding_widgets(self):
+    def add_thresholding_widgets(self, stain):
+
         self.thresh_layout = QtWidgets.QHBoxLayout()
         self.interactive_layout.addLayout(self.thresh_layout, stretch=1)
 
@@ -270,9 +316,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.strictness_delta = 0.05
         self.strictness_mi = -0.95
         self.strictness_mx = 0.95
+        default_strictness = self.logger.data[f'{stain}_strictness']
+        default_value = int((default_strictness - self.strictness_mi) / self.strictness_delta - 1)
         self.strictness_rng = self.strictness_mx - self.strictness_mi + self.strictness_delta
         self.strictness_slider.setRange(0, int(self.strictness_rng // self.strictness_delta))
-        self.strictness_slider.setValue(self.strictness_slider.maximum()//2)
+        self.strictness_slider.setValue(default_value)
         self.strictness_slider.valueChanged.connect(self.update_threshold)
         self.strictness_slider.setToolTip("""
         Higher strictness clips the left side of the histogram, reducing amount of pixels which will pass through the threshold. Lower strictness clips the right side of the histogram.
@@ -282,7 +330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.interactive_layout.addLayout(self.smoothing_layout, stretch=1)
         self.smoothing_checkbox = QtWidgets.QCheckBox('Smoothing')
         self.smoothing_layout.addWidget(self.smoothing_checkbox)
-        self.smoothing_checkbox.setChecked(False)
+        self.smoothing_checkbox.setChecked(self.logger.data[f'{stain}_smoothing'])
         self.smoothing_checkbox.stateChanged.connect(self.update_stain)
         self.smoothing_checkbox.setToolTip("""Anistrophic Smoothing preserves the boundaries of objects while equalizing the interiors. Useful for Object Detection.
         """)
@@ -293,7 +341,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.interactive_layout.addLayout(self.background_layout, stretch=1)        
         self.background_checkbox = QtWidgets.QCheckBox('Background Subtraction')
         self.background_layout.addWidget(self.background_checkbox)        
-        self.background_checkbox.setChecked(False)
+        self.background_checkbox.setChecked(self.logger.data[f'{stain}_normalization'])
         self.background_checkbox.stateChanged.connect(self.update_stain)
         self.background_checkbox.setToolTip("""
         Calculates and subtracts the background staining from the Color Deconvolution
@@ -308,7 +356,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background_radius_slider.setValue(self.background_radius_slider.maximum()//2)
         self.background_radius_slider.valueChanged.connect(self.update_stain)
 
-    def add_morphology_widgets(self):
+    def add_morphology_widgets(self, stain):
         self.closing_layout = QtWidgets.QHBoxLayout()
         self.interactive_layout.addLayout(self.closing_layout, stretch=1)
 
@@ -316,7 +364,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.closing_layout.addWidget(QtWidgets.QLabel('Morphology Closing'))
         self.closing_layout.addWidget(self.closing_slider)
         self.closing_slider.setMaximum(10)
-        self.closing_slider.setValue(0)
+        self.closing_slider.setValue(self.logger.data[f'{stain}_closing_radius'])
         self.closing_slider.valueChanged.connect(self.update_threshold)
         self.closing_slider.setToolTip("""
         This filter closes holes within objects which pass through the threshold.
@@ -329,7 +377,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.opening_layout.addWidget(QtWidgets.QLabel('Morphology Opening'))
         self.opening_layout.addWidget(self.opening_slider)
         self.opening_slider.setMaximum(10)
-        self.opening_slider.setValue(0)
+        self.opening_slider.setValue(self.logger.data[f'{stain}_opening_radius'])
         self.opening_slider.valueChanged.connect(self.update_threshold)
         self.opening_slider.setToolTip("""
         This filter deletes small objects which pass through the threshold.
@@ -472,23 +520,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.neuseg_widget.segment_length = self.length_spin.value()
         self.neuseg_widget.add_annotation()
 
+
     def update_thresholding_parameters(self):
         if not self.dab_widget is None:
-            active = self.dab_widget
+            stain = 'DAB'
         else:
-            active = self.cs_widget
-        active.apply_smoothing = self.smoothing_checkbox.isChecked()
-        active.normalize_background = self.background_checkbox.isChecked()
-        active.strictness = (self.strictness_slider.value()+1) * self.strictness_delta + self.strictness_mi
-        active.background_radius = (self.background_radius_slider.value()+1)*self.radius_delta
+            stain = 'CS'
+        self.logger.data[f'{stain}_smoothing'] = self.smoothing_checkbox.isChecked()
+        self.logger.data[f'{stain}_normalization'] = self.background_checkbox.isChecked()
+        self.logger.data[f'{stain}_strictness'] = (self.strictness_slider.value()+1) * self.strictness_delta + self.strictness_mi
 
     def update_morphology_parameters(self):
         if not self.dab_widget is None:
-            active = self.dab_widget
+            stain = 'DAB'
         else:
-            active = self.cs_widget
-        active.closing_radius = self.closing_slider.value()
-        active.opening_radius = self.opening_slider.value()        
+            stain = 'CS'
+        self.logger.data[f'{stain}_closing_radius'] = self.closing_slider.value()
+        self.logger.data[f'{stain}_opening_radius'] = self.opening_slider.value()
 
     def update_stain(self):
         self.update_thresholding_parameters()
@@ -526,7 +574,8 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     #tmp_directory = './test_tmp'
     tmp_directory = None
-    window = MainWindow(tmp_directory=tmp_directory)
+    parameters_path = './parameters.pkl'
+    window = MainWindow(tmp_directory=tmp_directory, parameters_path=parameters_path)
     app.exec()
 
 if __name__ == "__main__":

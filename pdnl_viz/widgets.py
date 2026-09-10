@@ -140,14 +140,12 @@ class MplCanvas(FigureCanvas):
 class StainWidget(MplCanvas):
     def __init__(self, parent, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
+        self.parameters = parent.logger.data
         self.ax_frame = self.figure.add_subplot(221)
         self.ax_recon = self.figure.add_subplot(222)
         self.ax_hist = self.figure.add_subplot(223)
         self.ax_overlay = self.figure.add_subplot(224)
 
-        self.strictness = 0.0
-        self.apply_smoothing = True
-        self.normalize_background = True
         self.background_radius = 100
         self.background_overlap = 0.5
 
@@ -155,14 +153,13 @@ class StainWidget(MplCanvas):
         super().set_slide(loader)
         self.frame = self.loader.load_frame(loc, size)
         self.ax_frame.imshow(self.frame.img)
-        self.set_processor()
 
-    def set_processor(self):
+    def set_processor(self, target_stain):
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
             subtract_dab=True,
-            apply_smoothing=self.apply_smoothing, 
-            normalize_background=self.normalize_background, 
+            apply_smoothing=self.parameters[f'{target_stain}_smoothing'], 
+            normalize_background=self.parameters[f'{target_stain}_normalization'],
             radius=self.background_radius, 
             overlap=self.background_overlap, 
         )
@@ -175,18 +172,23 @@ class StainWidget(MplCanvas):
         self.stains = np.concatenate([hem_od, dab_od, res_od], axis=2)
 
     def set_threshold(self, target_stain):
-        if hasattr(self, 'closing_radius'):
-            filters = [
-                pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', self.closing_radius),
-                pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', self.opening_radius),
-            ]
-        else:
-            filters = []
-
+        filters = [
+            pdnl_sana.filter.MorphologyFilter(
+                'closing', 'ellipse', 
+                self.parameters[f'{target_stain}_closing_radius']),
+            pdnl_sana.filter.MorphologyFilter(
+                'opening', 'ellipse', 
+                self.parameters[f'{target_stain}_opening_radius']),
+        ]
         hist = self.stain.get_histogram(mask=self.processor.main_mask)
         self.ax_hist.clear()
-        _ = pdnl_sana.threshold.triangular_method(hist, strictness=self.strictness, ax=self.ax_hist)
-        ret = self.processor.run(triangular_strictness=self.strictness, morphology_filters=filters, target_stain=target_stain)
+        _ = pdnl_sana.threshold.triangular_method(
+            hist, strictness=self.parameters[f'{target_stain}_strictness'], 
+            ax=self.ax_hist)
+        stain = 'HEM' if target_stain == 'CS' else target_stain
+        ret = self.processor.run(
+            triangular_strictness=self.parameters[f'{target_stain}_strictness'], 
+            morphology_filters=filters, target_stain=stain)
         pos = ret['positive_stain']
         overlay = self.frame.copy(); overlay.blend(pos, color=(255,0,0), alpha=0.8)
         self.ax_overlay.imshow(overlay.img)
@@ -200,8 +202,12 @@ class CSWidget(StainWidget):
         self.closing_radius = 0
         self.opening_radius = 0
 
+    def set_slide(self, loader, loc, size):
+        super().set_slide(loader, loc, size)
+        self.set_processor()
+        
     def set_processor(self):
-        super().set_processor()
+        super().set_processor('CS')
         self.stain = self.processor.hem
         self.stains[:,:,1] = 0
         self.stains[:,:,2] = 0
@@ -209,14 +215,18 @@ class CSWidget(StainWidget):
         self.ax_recon.imshow(recon)
         self.set_threshold()
     def set_threshold(self):
-        super().set_threshold('HEM')
+        super().set_threshold('CS')
 
 class DABWidget(StainWidget):
     def __init__(self, parent, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
 
+    def set_slide(self, loader, loc, size):
+        super().set_slide(loader, loc, size)
+        self.set_processor()
+
     def set_processor(self):
-        super().set_processor()
+        super().set_processor('DAB')
         self.stain = self.processor.dab
         self.stains[:,:,0] = 0
         self.stains[:,:,2] = 0
