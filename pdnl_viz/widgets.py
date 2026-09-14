@@ -16,6 +16,7 @@ from matplotlib.backend_bases import MouseButton
 from matplotlib.patches import Rectangle
 import matplotlib.collections as mcollections
 
+import cv2
 import numpy as np
 from tqdm import tqdm
 
@@ -41,12 +42,11 @@ class MplCanvas(FigureCanvas):
         if tmp_directory is None:
             self.temp_directory = tempfile.TemporaryDirectory()
             self.tmp_directory = self.temp_directory.name
-            self.tmp_directory = './test_tmp'
         else:
             self.tmp_directory = tmp_directory
         self.level = 0
-        self.n_cores = 1
-        self.frame_size = 1024
+        self.n_cores = 12
+        self.frame_size = 2048
 
     def start_tracking(self):
         self.cidpress = self.figure.canvas.mpl_connect('button_press_event', self.on_press)
@@ -64,6 +64,11 @@ class MplCanvas(FigureCanvas):
         pass
     def set_slide(self, loader):
         self.loader = loader
+        self.w, self.h = self.loader.level_dimensions[0]
+        self.w_um = self.w * self.loader.mpp
+        self.h_um = self.h * self.loader.mpp
+        self.extent = (0, self.w_um, self.h_um, 0)
+
         self.tb = self.loader.load_thumbnail()
         self.input_slide = self.loader.fname
         self.logger = sana.logging.Logger('normal', os.path.join(self.tmp_directory, 'log.pkl'))
@@ -85,7 +90,7 @@ class MplCanvas(FigureCanvas):
         for result in results:
             done += 1
             if not result is None:
-                hist, i, j = result
+                hist, j, i = result
                 histograms.append(hist)
                 done_mask.img[
                     j*frame_size_tb:j*frame_size_tb+frame_size_tb, 
@@ -98,16 +103,22 @@ class MplCanvas(FigureCanvas):
                 last_pct = pct
                 done_polys = done_mask.to_polygons()[0]
                 self.ax.clear()
-                self.ax.imshow(self.tb.img)
-                [self.ax.plot(*x.T, color='black') for x in done_polys]
+                self.ax.imshow(self.tb.img, extent=self.extent)
+                self.set_axis_style(self.ax)
+                for x in done_polys:
+                    x = self.loader.converter.rescale(x, level=0)
+                    self.ax.plot(*(x*self.loader.mpp).T, color='black')
                 self.ax.set_title(f'Preprocessing Chunks... {last_pct}%')
                 self.update_plot()
 
         self.ax.set_title('Done Preprocessing.')
         p = self.tissue_mask.to_polygons()[0]
         self.ax.clear()
-        self.ax.imshow(self.tb.img)
-        [self.ax.plot(*x.T, color='black') for x in p]
+        self.ax.imshow(self.tb.img, extent=self.extent)
+        self.set_axis_style(self.ax)
+        for x in p:
+            x = self.loader.converter.rescale(x, level=0)
+            self.ax.plot(*(x*self.loader.mpp).T, color='black')
         self.update_plot()
 
         # calculate the stain threshold for the image
@@ -122,6 +133,7 @@ class MplCanvas(FigureCanvas):
 
     def preprocess_wsi(self, target_stain):
         self.tissue_mask = neuseg.tissue.get_tissue_mask(self.tb)[0]
+        self.tissue_mask.level = self.loader.thumbnail_level
         self.tissue_mask.save(os.path.join(self.tmp_directory, 'tissue_mask.png'))
         self.rois, self.roi_holes = self.tissue_mask.to_polygons()
         self.rois = {'Tissue': self.rois}
@@ -137,14 +149,33 @@ class MplCanvas(FigureCanvas):
 
         return global_threshold       
 
+    def set_axis_style(self, ax, nbins=5):
+        #ax.xaxis.set_major_locator(plt.MaxNLocator(nbins))        
+        ax.xaxis.set_major_formatter(lambda x, pos: rf'${x/1000} mm$')
+        #ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+        #ax.yaxis.set_major_locator(plt.MaxNLocator(nbins))        
+        #ax.yaxis.set_major_formatter(r'${x} \mu m$')
+        ax.yaxis.set_major_formatter(lambda x, pos: rf'${x/1000} mm$')
+        #ax.set_yticklabels(ax.get_yticklabels(), rotation=45)
+        
 class StainWidget(MplCanvas):
     def __init__(self, parent, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
         self.parameters = parent.logger.data
+
         self.ax_frame = self.figure.add_subplot(221)
+        self.set_axis_style(self.ax_frame)
+        self.ax_frame.set_title('Full Resolution Frame')
+
         self.ax_recon = self.figure.add_subplot(222)
+        self.set_axis_style(self.ax_recon)
+        self.ax_recon.set_title('Color Deconvolution Results')
+
         self.ax_hist = self.figure.add_subplot(223)
+
         self.ax_overlay = self.figure.add_subplot(224)
+        self.set_axis_style(self.ax_overlay)
+        self.ax_overlay.set_title('Pixel Classifications')
 
         self.background_radius = 100
         self.background_overlap = 0.5
@@ -152,7 +183,14 @@ class StainWidget(MplCanvas):
     def set_slide(self, loader, loc, size):
         super().set_slide(loader)
         self.frame = self.loader.load_frame(loc, size)
-        self.ax_frame.imshow(self.frame.img)
+        wsi_loc = loader.converter.rescale(loc.copy(), level=0)
+        self.x0 = wsi_loc[0] * self.loader.mpp
+        self.y0 = wsi_loc[1] * self.loader.mpp
+        self.x1 = self.x0 + size[0] * self.loader.mpp
+        self.y1 = self.y0 + size[1] * self.loader.mpp
+        self.extent = (self.x0, self.x1, self.y1, self.y0)
+        self.ax_frame.imshow(self.frame.img, extent=self.extent)
+        self.set_axis_style(self.ax_frame)
 
     def set_processor(self, target_stain):
         self.processor = pdnl_sana.process.HDABProcessor(
@@ -185,13 +223,14 @@ class StainWidget(MplCanvas):
         _ = pdnl_sana.threshold.triangular_method(
             hist, strictness=self.parameters[f'{target_stain}_strictness'], 
             ax=self.ax_hist)
+        self.ax_hist.set_title('Pixel Intensity Histogram')
         stain = 'HEM' if target_stain == 'CS' else target_stain
         ret = self.processor.run(
             triangular_strictness=self.parameters[f'{target_stain}_strictness'], 
             morphology_filters=filters, target_stain=stain)
         pos = ret['positive_stain']
         overlay = self.frame.copy(); overlay.blend(pos, color=(255,0,0), alpha=0.8)
-        self.ax_overlay.imshow(overlay.img)
+        self.ax_overlay.imshow(overlay.img, extent=self.extent)
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
 
@@ -212,7 +251,7 @@ class CSWidget(StainWidget):
         self.stains[:,:,1] = 0
         self.stains[:,:,2] = 0
         recon = self.processor.ss.combine(self.stains)
-        self.ax_recon.imshow(recon)
+        self.ax_recon.imshow(recon, extent=self.extent)
         self.set_threshold()
     def set_threshold(self):
         super().set_threshold('CS')
@@ -334,10 +373,24 @@ class OverlayWidget(MplCanvas):
 class ROIWidget(MplCanvas):
     def __init__(self, parent, anno_file, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
+        self.parameters = parent.logger.data
+
         self.ax_frame = self.figure.add_subplot(221)
+        self.set_axis_style(self.ax_frame)
+        self.ax_frame.set_title('Original ROI')
+
         self.ax_curve = self.figure.add_subplot(222)
+        self.ax_curve.set_title('Cortical Analysis Results')
+        self.ax_curve.set_xlabel('Cortical Depth Layer')
+        self.ax_curve.set_ylabel('Standardized Features')
+        
         self.ax_dab = self.figure.add_subplot(223)
+        self.set_axis_style(self.ax_dab)
+        self.ax_dab.set_title('DAB Classifications')
+
         self.ax_hem = self.figure.add_subplot(224)
+        self.set_axis_style(self.ax_hem)
+        self.ax_hem.set_title('CS Classifications')
 
         annotations = sana.utils.read_geojson(anno_file)
         self.csf = [x for x in annotations if x.class_name == 'CSF'][0].to_curve()
@@ -357,39 +410,70 @@ class ROIWidget(MplCanvas):
         self.cs_strictness = -0.8
         self.cs_closing_radius = 2
         self.cs_opening_radius = 2
-        self.nlayers = 50
 
     def set_slide(self, loader):
         super().set_slide(loader)
+
         for x in self.segs:
             x.level = 2
             x.is_micron = False
             self.loader.converter.rescale(x, 0)
 
-        # TODO: plot laynii-like layers
         self.frame = self.loader.load_frame_with_segmentations(*self.segs)
         [sana.geo.transform_array_with_logger(x, self.loader.logger) for x in self.segs]
-        self.ax_frame.imshow(self.frame.img)
-        [self.ax_frame.plot(*x.T) for x in self.segs]
+
+        w, h = self.frame.size()
+        w_um = w * self.loader.mpp
+        h_um = h * self.loader.mpp
+        self.extent = (0, w_um, h_um, 0)
+
+        self.ax_frame.imshow(self.frame.img, extent=self.extent)
+        self.ax_dab.imshow(self.frame.img, extent=self.extent)
+        self.ax_hem.imshow(self.frame.img, extent=self.extent)
+        [self.ax_frame.plot(*(x*self.loader.mpp).T) for x in self.segs]
         self.update_plot()
 
     def set_deform(self):
         self.ax_curve.set_title('Calculating Layers...')
         self.update_plot()
+
+        for x in self.segs:
+            self.loader.converter.rescale(x, level=self.loader.thumbnail_level)
         self.sample_grid, _ = sana.interpolate.fan_sample(*self.segs)
+        #self.sample_grid = self.sample_grid * self.loader.converter.ds[2]
+        for x in self.segs:
+            self.loader.converter.rescale(x, level=0)
         self.set_layer_masks()
 
     def set_layer_masks(self):
-        out_h = self.frame.img.shape[0]
-        out_w = self.frame.img.shape[1]
-        self.layer_masks = sana.interpolate.sample_grid_to_layers(
-            self.sample_grid, out_h=out_h, out_w=out_w, nlayers=self.nlayers)
+        ds = self.loader.converter.ds[self.loader.thumbnail_level]        
+        out_h = int(self.frame.img.shape[0]/ds)
+        out_w = int(self.frame.img.shape[1]/ds)
 
-        self.ax_frame.clear()
-        self.ax_frame.imshow(self.layer_masks, cmap='rainbow')
-        self.ax_curve.set_title('')
+        self.layer_masks = sana.interpolate.sample_grid_to_layers(
+            self.sample_grid, out_h=out_h, out_w=out_w, nlayers=self.parameters['nlayers'])
+
+        self.layer_masks = sana.image.Frame(self.layer_masks)
+        self.layer_masks.resize(self.frame.size(), interpolation=cv2.INTER_NEAREST)
+        self.layer_masks = np.rint(self.layer_masks.img).astype(int)
+        self.ax_frame.imshow(self.layer_masks, cmap='rainbow', extent=self.extent)
+        
+        # self.layer_rois = []
+        # for i in range(self.nlayers):
+        #     mask = sana.image.Frame((self.layer_masks == i).astype(np.uint8))
+        #     rois, holes = mask.to_polygons()
+        #     self.layer_rois.append(rois)
+        # for layer_rois in self.layer_rois:
+        #     for roi in layer_rois:
+        #         self.ax_frame.plot(*(roi*self.loader.mpp).T)
+
         self.update_plot()
 
+    def get_ao(self):
+        num, den = pdnl_sana.quantify.calculate_ao(self.pos_dab, self.processor.main_mask)
+        ao = num / den
+        return ao, self.dab_curve
+    
     def process_stains(self):
         self.process_dab()
         self.plot_dab_curves()
@@ -397,6 +481,8 @@ class ROIWidget(MplCanvas):
         self.plot_cs_curves()
 
     def process_dab(self):
+        self.ax_curve.set_title('Processing DAB...')
+        self.update_plot()
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
             apply_smoothing=self.apply_smoothing,
@@ -417,10 +503,14 @@ class ROIWidget(MplCanvas):
         ret = self.processor.run(triangular_strictness=self.strictness, morphology_filters=filters, target_stain="DAB")
         pos = ret['positive_stain']
         self.pos_dab = pos
-        self.ax_dab.imshow(self.pos_dab.img)
+        dab_overlay = self.frame.copy()
+        dab_overlay.blend(self.pos_dab, color=(0,0,255))
+        self.ax_dab.imshow(dab_overlay.img)
         self.update_plot()
 
     def process_cs(self):
+        self.ax_curve.set_title('Processing CS...')
+        self.update_plot()
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
             apply_smoothing=self.apply_smoothing,
@@ -462,11 +552,15 @@ class ROIWidget(MplCanvas):
         ints = np.array(ints)
 
         self.cs_cells = np.vstack([ctrs[:,0], ctrs[:,1], areas, ints]).T
-        self.ax_hem.imshow(self.pos_hem.img)
+        hem_overlay = self.frame.copy()
+        hem_overlay.blend(self.pos_hem, color=(255,0,0))
+        self.ax_hem.imshow(hem_overlay.img)
         self.update_plot()
 
     def plot_dab_curves(self):
-        k = int(self.nlayers / 7)
+        self.ax_curve.set_title('Calculating DAB Curve...')
+        self.update_plot()
+        k = int(self.parameters['nlayers'] / 7)
         if k % 2 == 0: k += 1
         def smooth(x, N):
             mu, sg = np.nanmean(x), np.nanstd(x)
@@ -474,12 +568,15 @@ class ROIWidget(MplCanvas):
             cumsum = np.cumsum(np.insert(x, 0, 0))
             return (cumsum[N:] - cumsum[:-N]) / float(N)
         dab_curve = sana.quantify.apply_layer_masks_to_frame(self.pos_dab, self.layer_masks)
+        self.dab_curve = smooth(dab_curve, k)
         self.ax_curve.clear()
-        self.ax_curve.plot(smooth(dab_curve, k), color='blue', label='DAB')
+        self.ax_curve.plot(self.dab_curve, color='blue', label='DAB')
         self.update_plot()
 
     def plot_cs_curves(self):
-        k = int(self.nlayers / 7)
+        self.ax_curve.set_title('Calculating CS Curve...')
+        self.update_plot()
+        k = int(self.parameters['nlayers'] / 7)
         if k % 2 == 0: k += 1
         def smooth(x, N):
             mu, sg = np.nanmean(x), np.nanstd(x)
@@ -490,10 +587,12 @@ class ROIWidget(MplCanvas):
         labels = ['CS Cell Density', 'CS Cell Area', 'CS Cell Intensity']
         colors = ['red', 'green', 'yellow']
         cell_features = sana.quantify.apply_layer_masks_to_cells(self.cs_cells, self.layer_masks)
-        for i in range(3):
+        for i in range(1):
             self.ax_curve.plot(smooth(cell_features[:,i], k), color=colors[i], label=labels[i])
         self.ax_curve.legend()
         self.update_plot()
+
+
 
 class ThumbnailWidget(MplCanvas):
     updated = QtCore.Signal()
@@ -508,54 +607,61 @@ class ThumbnailWidget(MplCanvas):
         self.ax.add_patch(self.rect)
 
     def set_slide(self, loader):
-        self.loader = loader 
+        super().set_slide(loader)
 
         self.tb = self.loader.load_thumbnail()
-        self.ax.imshow(self.tb.img)        
+        self.ax.imshow(self.tb.img, extent=(0, self.w_um, self.h_um, 0))
+        self.set_axis_style(self.ax)
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
 
+
         self.ctr = self.tb.size() // 2
         l = 400
-        self.rect_size = pdnl_sana.geo.Point(l, l, is_micron=False, level=0)
-        self.rect_size_tb = self.loader.converter.rescale(self.rect_size, self.loader.thumbnail_level)
+        self.rect_size = pdnl_sana.geo.Point(l, l, is_micron=False, level=0) 
+        self.rect_size_plot = self.rect_size * self.loader.mpp
+        self.rect_size_tb = self.loader.converter.rescale(self.rect_size, self.loader.thumbnail_level) * self.loader.mpp
         self.rect.set_xy(self.ctr)
-        self.rect.set_width(self.rect_size_tb[0])
-        self.rect.set_height(self.rect_size_tb[1])
+        self.rect.set_width(self.rect_size_plot[0])
+        self.rect.set_height(self.rect_size_plot[1])
 
         self.start_tracking()        
         self.updated.emit()
 
     def get_rect(self):
-        loc = pdnl_sana.geo.Point(*self.rect.get_xy(), is_micron=False, level=self.loader.thumbnail_level)
+        loc = pdnl_sana.geo.Point(*self.rect.get_xy(), is_micron=False, level=0)
+        loc = loc / self.loader.mpp
+        loc = self.loader.converter.rescale(loc, level=self.loader.thumbnail_level)
         return loc, self.rect_size
         
     def on_press(self, event):
         if self.rect is None or (event.inaxes != self.rect.axes): return
 
         if event.button is MouseButton.RIGHT: 
-            l = 250
-            self.loader.converter.mtop(l, level=self.tb.level)
+            l = 1000 * self.loader.mpp
+            l = self.loader.converter.mtop(l, level=0)
             x, y = event.xdata, event.ydata
             self.ax.set_xlim([x-l//2, x+l//2])
             self.ax.set_ylim([y+l//2, y-l//2])
             self.figure.canvas.draw()
             self.figure.canvas.flush_events()
         else:
-            self.rect.set_xy((event.xdata-self.rect_size_tb[0]//2, event.ydata-self.rect_size_tb[1]//2))
+            x = event.xdata-self.rect_size_plot[0]//2
+            y = event.ydata-self.rect_size_plot[1]//2
+            self.rect.set_xy((x, y))
             self.figure.canvas.draw()
             self.figure.canvas.flush_events()
             self.updated.emit()
 
     def on_motion(self, event):
         if self.rect is None or (event.inaxes != self.rect.axes and not self.zoom_reset): 
-            self.ax.set_xlim([0, self.tb.size()[0]])
-            self.ax.set_ylim([self.tb.size()[1], 1])
+            self.ax.set_xlim([0, self.w_um])
+            self.ax.set_ylim([self.h_um, 0])
             self.zoom_reset = True
             self.figure.canvas.draw()
             self.figure.canvas.flush_events()
             return
-        
+
         self.zoom_reset = False
         dt = time.time() - self.t0
         if dt < 1/self.fps: return
@@ -571,6 +677,8 @@ class ThumbnailWidget(MplCanvas):
 class NeusegWidget(MplCanvas):
     def __init__(self, parent, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
+        self.parameters = parent.logger.data
+
         self.ax = self.figure.add_subplot(111)
 
         self.reset_data()
@@ -593,8 +701,11 @@ class NeusegWidget(MplCanvas):
 
     def set_slide(self, loader, staining_code):
         super().set_slide(loader)
+
         self.staining_code = staining_code        
-        self.ax.imshow(self.tb.img)
+        self.ax.imshow(self.tb.img, extent=(0, self.w_um, self.h_um, 0))
+        self.set_axis_style(self.ax)
+
         self.update_plot()
 
     def preprocess_cs(self):
@@ -629,7 +740,7 @@ class NeusegWidget(MplCanvas):
             cells.append(res)
             if pct > last_pct:
                 for x in plot_cells:
-                    self.ax.plot(*x[::16].T / self.loader.ds[self.tb.level], 
+                    self.ax.plot(*(x[::8]*self.loader.mpp).T, 
                                  linestyle='', marker='.', color='red')
                     self.update_plot()
                     plot_cells = []
@@ -675,7 +786,8 @@ class NeusegWidget(MplCanvas):
 
         out = self.heatmap_alpha*x + (1-self.heatmap_alpha)*self.tb.img
         out = np.rint(out).astype(np.uint8)
-        self.ax.imshow(out)
+        self.ax.imshow(out, extent=self.extent)
+        self.set_axis_style(self.ax)
         self.update_plot()
 
     def segment_cortex(self):
@@ -695,13 +807,15 @@ class NeusegWidget(MplCanvas):
             tissue_mask=self.tissue_mask,
             tb=self.tb,
             logger=self.logger,)
-        gm_mask = sana.image.Frame(gm_mask)
         gm_mask.to_binary()
+        gm_mask.mask(wm_mask, invert=True)
         self.gm_polys, _ = gm_mask.to_polygons()
+        self.gm_polys = [sana.interpolate.interp_poly(x) for x in self.gm_polys]
+        self.gm_polys = [x.to_polygon() for x in self.contours]
         
         self.gm_mask = self.tissue_mask.copy()
-        self.gm_mask.img = (self.gm_mask.img / np.max(self.gm_mask.img)).astype(np.uint8)
-        self.gm_mask.img += (wm_mask[:,:,None]/np.max(wm_mask)).astype(np.uint8)
+        self.gm_mask.img = (self.gm_mask.img/np.max(self.gm_mask.img)).astype(np.uint8)
+        self.gm_mask.img += (wm_mask.img/np.max(wm_mask.img)).astype(np.uint8)
 
         # allow user drawn annotations now that we have all data required
         self.start_tracking()
@@ -710,17 +824,25 @@ class NeusegWidget(MplCanvas):
 
     def plot_segmentations(self):
         self.ax.clear()
-        self.ax.imshow(self.tb.img)
+        self.ax.imshow(self.tb.img, extent=self.extent)
+        self.set_axis_style(self.ax)
         ds = self.loader.converter.ds[self.tb.level]
         ds = 1
-        for x in self.contours['gm_wm']:
-            self.ax.plot(*np.array(x).T, color='red')
-        for x in self.contours['gm_csf']:
-            self.ax.plot(*np.array(x).T, color='blue')
+        for x in self.contours:
+            x.level = 2
+            x = self.loader.converter.rescale(x, 0)
+            if 'wm' in x.class_name:
+                self.ax.plot(*(x*self.loader.mpp).T, color='red')
+            else:
+                self.ax.plot(*(x*self.loader.mpp).T, color='blue')
+            self.loader.converter.rescale(x, self.loader.thumbnail_level)
+        self.ax.set_title('Click anywhere in Cortex to generate a ROI...')
         self.update_plot()
 
     def on_press(self, event):
         x, y = event.xdata, event.ydata
+        x = x / (self.loader.converter.ds[self.loader.thumbnail_level] * self.loader.mpp)
+        y = y / (self.loader.converter.ds[self.loader.thumbnail_level] * self.loader.mpp)
         for poly in self.gm_polys:
             if sana.geo.ray_tracing(x, y, poly):
                 self.loc_x = x
@@ -736,14 +858,23 @@ class NeusegWidget(MplCanvas):
         except:
             return
         csf = csf_poly.slice_shortest(csf0, csf1).astype(float)
+        smooth_csf = sana.interpolate.fit_rotated_polynomial(csf, 2, 100)
+        if not smooth_csf is None and False:
+            csf = smooth_csf
         wm = wm_poly.slice_shortest(wm0, wm1).astype(float)
+        smooth_wm = sana.interpolate.fit_rotated_polynomial(wm, 2, 100)
+        if not smooth_wm is None and False:
+            wm = smooth_wm
         s0 = sana.geo.curve_like(csf, [csf_poly[csf0][0], wm_poly[wm0][0]], [csf_poly[csf0][1], wm_poly[wm0][1]]).astype(float)
         s1 = sana.geo.curve_like(csf, [csf_poly[csf1][0], wm_poly[wm1][0]], [csf_poly[csf1][1], wm_poly[wm1][1]]).astype(float)
         self.plot_segmentations()
-        self.ax.plot(*csf.T, color='pink')
-        self.ax.plot(*wm.T, color='yellow')
-        self.ax.plot(*s0.T, color='black')
-        self.ax.plot(*s1.T, color='black')
+        curves = [csf, wm, s0, s1]
+        colors = ['pink', 'yellow', 'black', 'black']
+        for color, curve in zip(colors, curves):
+            curve.level = 2
+            curve = self.loader.converter.rescale(curve, 0)
+            self.ax.plot(*(curve*self.loader.mpp).T, color=color)
+            curve = self.loader.converter.rescale(curve, self.loader.thumbnail_level)
         self.update_plot()
         annos = [
             csf.to_annotation('CSF'),
@@ -804,7 +935,7 @@ class NeusegWidget(MplCanvas):
 
         # get the spine of the ROI
         csf, wm = self.get_shortest(gm, (x,y))
-    
+
         # get the lateral direction of cortex
         th = np.arctan2((wm[1]-csf[1]), (wm[0]-csf[0]))
         thp = th + np.pi/2
