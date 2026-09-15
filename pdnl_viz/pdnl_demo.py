@@ -26,7 +26,7 @@ import pdnl_sana.quantify
 import neuseg.tissue
 import neuseg.nuclei
 
-from .widgets import ThumbnailWidget, DABWidget, CSWidget, NeusegWidget, OverlayWidget, ROIWidget
+from pdnl_viz.widgets import ThumbnailWidget, DABWidget, CSWidget, NeusegWidget, OverlayWidget, ROIWidget
 
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -130,13 +130,11 @@ class MainWindow(QtWidgets.QMainWindow):
     # Retrieved 2026-08-31, License - CC BY-SA 3.0
     def resource_path(self, relative_path):
         """ Get absolute path to resource, works for dev and for PyInstaller """
-        try:
-            # PyInstaller creates a temp folder and stores path in _MEIPASS
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.abspath(".")
-
-        return os.path.join(base_path, relative_path)
+        bundle_dir = os.path.abspath(os.path.dirname(__file__))
+        if os.path.exists(os.path.join(bundle_dir, relative_path)):
+            return os.path.join(bundle_dir, relative_path)
+        else:
+            return os.path.join(os.path.abspath("."), relative_path)
 
     def set_default_parameters(self):
         self.set_default_dab_parameters()

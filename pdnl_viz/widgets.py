@@ -45,7 +45,7 @@ class MplCanvas(FigureCanvas):
         else:
             self.tmp_directory = tmp_directory
         self.level = 0
-        self.n_cores = 12
+        self.n_cores = 1
         self.frame_size = 2048
 
     def start_tracking(self):
@@ -590,9 +590,8 @@ class ROIWidget(MplCanvas):
         for i in range(1):
             self.ax_curve.plot(smooth(cell_features[:,i], k), color=colors[i], label=labels[i])
         self.ax_curve.legend()
+        self.ax_curve.set_title('Done! Next Click "Store Results" and "Export"')        
         self.update_plot()
-
-
 
 class ThumbnailWidget(MplCanvas):
     updated = QtCore.Signal()
@@ -859,11 +858,11 @@ class NeusegWidget(MplCanvas):
             return
         csf = csf_poly.slice_shortest(csf0, csf1).astype(float)
         smooth_csf = sana.interpolate.fit_rotated_polynomial(csf, 2, 100)
-        if not smooth_csf is None and False:
+        if not smooth_csf is None:
             csf = smooth_csf
         wm = wm_poly.slice_shortest(wm0, wm1).astype(float)
         smooth_wm = sana.interpolate.fit_rotated_polynomial(wm, 2, 100)
-        if not smooth_wm is None and False:
+        if not smooth_wm is None:
             wm = smooth_wm
         s0 = sana.geo.curve_like(csf, [csf_poly[csf0][0], wm_poly[wm0][0]], [csf_poly[csf0][1], wm_poly[wm0][1]]).astype(float)
         s1 = sana.geo.curve_like(csf, [csf_poly[csf1][0], wm_poly[wm1][0]], [csf_poly[csf1][1], wm_poly[wm1][1]]).astype(float)
