@@ -195,7 +195,7 @@ class StainWidget(MplCanvas):
     def set_processor(self, target_stain):
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
-            subtract_dab=True,
+            subtract_dab=False,
             apply_smoothing=self.parameters[f'{target_stain}_smoothing'], 
             normalize_background=self.parameters[f'{target_stain}_normalization'],
             radius=self.background_radius, 
@@ -229,7 +229,7 @@ class StainWidget(MplCanvas):
             triangular_strictness=self.parameters[f'{target_stain}_strictness'], 
             morphology_filters=filters, target_stain=stain)
         pos = ret['positive_stain']
-        overlay = self.frame.copy(); overlay.blend(pos, color=(255,0,0), alpha=0.8)
+        overlay = self.frame.copy(); overlay.blend(pos, color=self.color, alpha=0.8)
         self.ax_overlay.imshow(overlay.img, extent=self.extent)
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
@@ -254,6 +254,7 @@ class CSWidget(StainWidget):
         self.ax_recon.imshow(recon, extent=self.extent)
         self.set_threshold()
     def set_threshold(self):
+        self.color = (0,0,255)        
         super().set_threshold('CS')
 
 class DABWidget(StainWidget):
@@ -273,6 +274,7 @@ class DABWidget(StainWidget):
         self.ax_recon.imshow(recon)
         self.set_threshold()
     def set_threshold(self):
+        self.color = (255,0,0)
         super().set_threshold('DAB')
 
 class OverlayWidget(MplCanvas):
@@ -421,6 +423,8 @@ class ROIWidget(MplCanvas):
 
         self.frame = self.loader.load_frame_with_segmentations(*self.segs)
         [sana.geo.transform_array_with_logger(x, self.loader.logger) for x in self.segs]
+        self.roi = sana.geo.connect_segments(*self.segs)
+        self.mask = sana.image.create_mask_like(self.frame, [self.roi])
 
         w, h = self.frame.size()
         w_um = w * self.loader.mpp
@@ -457,9 +461,13 @@ class ROIWidget(MplCanvas):
         self.layer_masks.resize(self.frame.size(), interpolation=cv2.INTER_NEAREST)
         self.layer_masks = np.rint(self.layer_masks.img).astype(int)
         self.ax_frame.imshow(self.layer_masks, cmap='rainbow', extent=self.extent)
-        
+
+        # self.ax_frame.clear()
+        # self.set_axis_style(self.ax_frame)
+        # self.ax_frame.set_title('Original ROI')
+        # self.ax_frame.imshow(self.frame.img, extent=self.extent)
         # self.layer_rois = []
-        # for i in range(self.nlayers):
+        # for i in range(1, np.max(self.layer_masks)+1):
         #     mask = sana.image.Frame((self.layer_masks == i).astype(np.uint8))
         #     rois, holes = mask.to_polygons()
         #     self.layer_rois.append(rois)
@@ -485,27 +493,30 @@ class ROIWidget(MplCanvas):
         self.update_plot()
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
-            apply_smoothing=self.apply_smoothing,
-            normalize_background=self.normalize_background, 
+            apply_smoothing=self.parameters['DAB_smoothing'],
+            normalize_background=self.parameters['DAB_normalization'],
             radius=self.background_radius, 
             overlap=self.background_overlap, 
         )
         if hasattr(self, 'closing_radius'):
             filters = [
-                pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', self.closing_radius),
-                pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', self.opening_radius),
+                pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', self.parameters['DAB_closing_radius']),
+                pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', self.parameters['DAB_opening_radius']),
             ]
         else:
             filters = []
         self.stain = self.processor.dab
-        hist = self.stain.get_histogram(mask=self.processor.main_mask)
-        _ = pdnl_sana.threshold.triangular_method(hist, strictness=self.strictness)
-        ret = self.processor.run(triangular_strictness=self.strictness, morphology_filters=filters, target_stain="DAB")
+        ret = self.processor.run(
+            triangular_strictness=self.parameters['DAB_strictness'],
+            morphology_filters=filters,
+            target_stain="DAB")
         pos = ret['positive_stain']
         self.pos_dab = pos
+        self.pos_dab.mask(self.mask)
         dab_overlay = self.frame.copy()
-        dab_overlay.blend(self.pos_dab, color=(0,0,255))
+        dab_overlay.blend(self.pos_dab, color=(255,0,0))
         self.ax_dab.imshow(dab_overlay.img)
+        self.ax_dab.plot(*self.roi.T, color='black')
         self.update_plot()
 
     def process_cs(self):
@@ -513,21 +524,20 @@ class ROIWidget(MplCanvas):
         self.update_plot()
         self.processor = pdnl_sana.process.HDABProcessor(
             self.loader.logger, self.frame, 
-            apply_smoothing=self.apply_smoothing,
-            normalize_background=self.normalize_background, 
+            apply_smoothing=self.parameters['CS_smoothing'],
+            normalize_background=self.parameters['CS_normalization'],
             radius=self.background_radius, 
             overlap=self.background_overlap, 
         )
         if hasattr(self, 'cs_closing_radius'):
             filters = [
-                pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', self.cs_closing_radius),
-                pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', self.cs_opening_radius),
+                pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', self.parameters['CS_closing_radius']),
+                pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', self.parameters['CS_opening_radius']),
             ]
         else:
             filters = []
         self.stain = self.processor.hem
-        hist = self.stain.get_histogram(mask=self.processor.main_mask)
-        ret = self.processor.run(triangular_strictness=self.cs_strictness, morphology_filters=filters, target_stain="HEM")
+        ret = self.processor.run(triangular_strictness=self.parameters['CS_strictness'], morphology_filters=filters, target_stain="HEM")
         pos = ret['positive_stain']
         self.pos_hem = pos
     
@@ -552,9 +562,11 @@ class ROIWidget(MplCanvas):
         ints = np.array(ints)
 
         self.cs_cells = np.vstack([ctrs[:,0], ctrs[:,1], areas, ints]).T
+        self.pos_hem.mask(self.mask)
         hem_overlay = self.frame.copy()
-        hem_overlay.blend(self.pos_hem, color=(255,0,0))
+        hem_overlay.blend(self.pos_hem, color=(0,0,255))
         self.ax_hem.imshow(hem_overlay.img)
+        self.ax_hem.plot(*self.roi.T, color='black')
         self.update_plot()
 
     def plot_dab_curves(self):
@@ -563,14 +575,15 @@ class ROIWidget(MplCanvas):
         k = int(self.parameters['nlayers'] / 7)
         if k % 2 == 0: k += 1
         def smooth(x, N):
-            mu, sg = np.nanmean(x), np.nanstd(x)
-            x = (x-mu) / sg
             cumsum = np.cumsum(np.insert(x, 0, 0))
             return (cumsum[N:] - cumsum[:-N]) / float(N)
+        def standardize(x):
+            mu, sg = np.nanmean(x), np.nanstd(x)
+            return (x-mu) / sg
         dab_curve = sana.quantify.apply_layer_masks_to_frame(self.pos_dab, self.layer_masks)
         self.dab_curve = smooth(dab_curve, k)
         self.ax_curve.clear()
-        self.ax_curve.plot(self.dab_curve, color='blue', label='DAB')
+        self.ax_curve.plot(standardize(self.dab_curve), color='red', label='DAB')
         self.update_plot()
 
     def plot_cs_curves(self):
@@ -579,17 +592,17 @@ class ROIWidget(MplCanvas):
         k = int(self.parameters['nlayers'] / 7)
         if k % 2 == 0: k += 1
         def smooth(x, N):
-            mu, sg = np.nanmean(x), np.nanstd(x)
-            x = (x-mu) / sg
             cumsum = np.cumsum(np.insert(x, 0, 0))
             return (cumsum[N:] - cumsum[:-N]) / float(N)
-
+        def standardize(x):
+            mu, sg = np.nanmean(x), np.nanstd(x)
+            return (x-mu) / sg
         labels = ['CS Cell Density', 'CS Cell Area', 'CS Cell Intensity']
-        colors = ['red', 'green', 'yellow']
+        colors = ['blue', 'green', 'yellow']
         cell_features = sana.quantify.apply_layer_masks_to_cells(self.cs_cells, self.layer_masks)
         for i in range(1):
-            self.ax_curve.plot(smooth(cell_features[:,i], k), color=colors[i], label=labels[i])
-        self.ax_curve.legend()
+            self.ax_curve.plot(standardize(smooth(cell_features[:,i], k)), color=colors[i], label=labels[i])
+        #self.ax_curve.legend()
         self.ax_curve.set_title('Done! Next Click "Store Results" and "Export"')        
         self.update_plot()
 
@@ -601,7 +614,7 @@ class ThumbnailWidget(MplCanvas):
     def __init__(self, parent, width=5, height=4, **kwargs):
         super().__init__(parent=parent, width=width, height=height, **kwargs)
         self.ax = self.figure.add_subplot(111)
-        self.rect = Rectangle(xy=(0,0), width=1, height=1, color='red', linewidth=1, linestyle='--', fill=False)
+        self.rect = Rectangle(xy=(0,0), width=1, height=1, color='blue', linewidth=1, linestyle='--', fill=False)
         self.rect.moving = False
         self.ax.add_patch(self.rect)
 
@@ -690,9 +703,9 @@ class NeusegWidget(MplCanvas):
         self.close_r = 2
         self.open_r = 2
         self.feature_ds = 4.0
-        self.window_size = 1000
+        self.window_size = 2000
         self.heatmap_mi = np.full((3,), -1.0)
-        self.heatmap_mx = np.full((3,), +2.5)
+        self.heatmap_mx = np.full((3,), +2.0)
         self.heatmap_alpha = 1.0
         self.segment_length = 1000
         self.loc_x = None
@@ -700,7 +713,6 @@ class NeusegWidget(MplCanvas):
 
     def set_slide(self, loader, staining_code):
         super().set_slide(loader)
-
         self.staining_code = staining_code        
         self.ax.imshow(self.tb.img, extent=(0, self.w_um, self.h_um, 0))
         self.set_axis_style(self.ax)
@@ -771,6 +783,8 @@ class NeusegWidget(MplCanvas):
         self.plot_heatmap()
 
     def plot_heatmap(self):
+        if not hasattr(self, 'heatmap'):
+            return        
         self.ax.clear()
         x = self.heatmap.copy().img
         valid = x[self.tissue_mask.img[:,:,0] != 0]
@@ -781,6 +795,12 @@ class NeusegWidget(MplCanvas):
         for i in range(3):
             x[:,:,i] = np.clip(x[:,:,i], mi[i], mx[i])
             x[:,:,i] = 255*(x[:,:,i] - mi[i]) / (mx[i]-mi[i])
+        if not self.parameters['show_density']:
+            x[:,:,0] = 0
+        if not self.parameters['show_area']:
+            x[:,:,1] = 0
+        if not self.parameters['show_intensity']:
+            x[:,:,2] = 0
         x = 255-x
 
         out = self.heatmap_alpha*x + (1-self.heatmap_alpha)*self.tb.img
@@ -811,6 +831,7 @@ class NeusegWidget(MplCanvas):
         self.gm_polys, _ = gm_mask.to_polygons()
         self.gm_polys = [sana.interpolate.interp_poly(x) for x in self.gm_polys]
         self.gm_polys = [x.to_polygon() for x in self.contours]
+        self.gm_polys = [pdnl_sana.interpolate.interp_poly(x) for x in self.gm_polys]
         
         self.gm_mask = self.tissue_mask.copy()
         self.gm_mask.img = (self.gm_mask.img/np.max(self.gm_mask.img)).astype(np.uint8)
@@ -858,7 +879,7 @@ class NeusegWidget(MplCanvas):
             return
         csf = csf_poly.slice_shortest(csf0, csf1).astype(float)
         smooth_csf = sana.interpolate.fit_rotated_polynomial(csf, 2, 100)
-        if not smooth_csf is None:
+        if not smooth_csf is None and False:
             csf = smooth_csf
         wm = wm_poly.slice_shortest(wm0, wm1).astype(float)
         smooth_wm = sana.interpolate.fit_rotated_polynomial(wm, 2, 100)

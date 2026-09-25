@@ -64,12 +64,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.neuron_button = QtWidgets.QPushButton('Neuronal (SMI32)')
         self.slide_layout.addWidget(self.neuron_button)
         self.neuron_button.clicked.connect(self.load_neuron_slide)
-        self.neuron_button.setEnabled(False)
+        # self.neuron_button.setEnabled(False)
         
         self.button_layout = QtWidgets.QHBoxLayout()
         self.thumbnail_layout.addLayout(self.button_layout)
 
-        self.dab_button = QtWidgets.QPushButton('3) DAB Processing')
+        self.dab_button = QtWidgets.QPushButton('3) Marker Processing')
         self.dab_button.pressed.connect(self.show_dab)
         self.dab_button.setToolTip("""
         Optionally apply smoothing and background normalization, then select a threshold semi-automatically by setting your desired strictness.
@@ -84,12 +84,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cs_button.setToolTip("""
         Optionally apply smoothing and background normalization, then select a threshold semi-automatically by setting your desired strictness. Morphology filters help to control noise.
         """)
-        self.neuseg_button = QtWidgets.QPushButton('2) NEUSEG')
+        self.neuseg_button = QtWidgets.QPushButton('2) ROI Selection')
         self.neuseg_button.pressed.connect(self.show_neuseg)
         self.neuseg_button.setToolTip("""
         Generate Cortical Segmentations utilizing parameters selected in \"Counterstain Processing\"
         """)
-        self.roi_button = QtWidgets.QPushButton('4) ROI Analysis')
+        self.roi_button = QtWidgets.QPushButton('4) ROI Quantification')
         self.roi_button.pressed.connect(self.show_roi)
         self.roi_button.setToolTip("""
         Quantify DAB and Counterstain features within the selected ROI
@@ -140,6 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_default_dab_parameters()
         self.set_default_cs_parameters()
         self.set_default_roi_parameters()
+        self.set_default_neuseg_parameters()
 
     def set_default_dab_parameters(self):
         self.logger.data['DAB_strictness'] = 0.0
@@ -157,6 +158,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.logger.data['CS_closing_radius'] = 0
     def set_default_roi_parameters(self):
         self.logger.data['nlayers'] = 10
+    def set_default_neuseg_parameters(self):
+        self.logger.data['show_density'] = True
+        self.logger.data['show_area'] = True
+        self.logger.data['show_intensity'] = True        
 
     def automate_start(self):
         pass
@@ -180,7 +185,7 @@ class MainWindow(QtWidgets.QMainWindow):
         slide_path = os.path.join(self.resource_path('.'), self.RESOURCE_PATH, 'tau.tif')
         self.load_slide(slide_path, 'HDAB')
     def load_neuron_slide(self):
-        slide_path = None
+        slide_path = '/Volumes/noahcapp/smi32.svs'
         self.load_slide(slide_path, 'HDAB')
     def update_frame(self):
         if not self.dab_widget is None:
@@ -238,6 +243,10 @@ class MainWindow(QtWidgets.QMainWindow):
         Defines the resolution for quantifying digital layers of the signal
         """)
 
+        self.roi_measurement_edit = QtWidgets.QLineEdit()
+        self.parameters_layout.addWidget(QtWidgets.QLabel('Measurment Name'))
+        self.parameters_layout.addWidget(self.roi_measurement_edit)
+
         self.save_roi_button = QtWidgets.QPushButton('Store Results')
         self.parameters_layout.addWidget(self.save_roi_button)
         self.save_roi_button.clicked.connect(self.store_roi_results)
@@ -250,11 +259,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ao, curve = self.roi_widget.get_ao()
         record = {
             'Slide': self.slide_name,
+            'Measurment': self.roi_measurement_edit.text(),
             'ROI': len(self.roi_results),
             '% Area Occupied': 100*ao,
         }
         for i in range(len(curve)):
-            record[f'BIN_{i}'] = curve[i]
+            record[f'BIN_{i}'] = 100*curve[i]
         self.roi_results.append(record)
 
     def export_results(self):
@@ -345,7 +355,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thresh_layout = QtWidgets.QHBoxLayout()
         self.interactive_layout.addLayout(self.thresh_layout, stretch=1)
 
-        self.thresh_layout.addWidget(QtWidgets.QLabel('Strictness'))
+        self.thresh_layout.addWidget(QtWidgets.QLabel('Strictness (-1,+1)'))
         self.strictness_spin = QtWidgets.QDoubleSpinBox()
         self.thresh_layout.addWidget(self.strictness_spin, stretch=1)
         self.strictness_spin.setSingleStep(0.1)
@@ -422,28 +432,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.button_layout = QtWidgets.QHBoxLayout()
         self.interactive_layout.addLayout(self.button_layout, stretch=1)
 
-        self.preprocess_button = QtWidgets.QPushButton('Preprocess Chunks')
+        self.preprocess_button = QtWidgets.QPushButton('1) Preprocess Chunks')
         self.button_layout.addWidget(self.preprocess_button)        
         self.preprocess_button.clicked.connect(self.neuseg_widget.preprocess_cs)
         self.preprocess_button.setToolTip("""
         Color Deconvolution and Global Threshold Calculation
         """)
 
-        self.segcells_button = QtWidgets.QPushButton('Segment Cells')
+        self.segcells_button = QtWidgets.QPushButton('2) Segment Cells')
         self.button_layout.addWidget(self.segcells_button)
         self.segcells_button.clicked.connect(self.neuseg_widget.segment_cells)
         self.segcells_button.setToolTip("""
         Instance segmentation of the surviving objects from Counterstain Thresholding
         """)
 
-        self.heatmap_button = QtWidgets.QPushButton('Aggregate Cells')
+        self.heatmap_button = QtWidgets.QPushButton('3) Aggregate Cells')
         self.button_layout.addWidget(self.heatmap_button)
         self.heatmap_button.clicked.connect(self.neuseg_widget.aggregate_cells)
         self.heatmap_button.setToolTip("""
         Creates a heatmap of counterstain cell features -- Density, Avg. Area, & Avg. Intensity
         """)
 
-        self.cortex_button = QtWidgets.QPushButton('Segment Cortex')
+        self.cortex_button = QtWidgets.QPushButton('4) Segment Cortex')
         self.button_layout.addWidget(self.cortex_button)
         self.cortex_button.clicked.connect(self.neuseg_widget.segment_cortex)
         self.cortex_button.setToolTip("""
@@ -459,8 +469,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.window_spin = QtWidgets.QSpinBox()
         l.addWidget(QtWidgets.QLabel('Heatmap Window'))
         l.addWidget(self.window_spin)
-        self.window_spin.setRange(100, 2000)
-        self.window_spin.setValue(1000)
+        self.window_spin.setRange(100, 3000)
+        self.window_spin.setValue(2000)
         self.window_spin.setSingleStep(250)
         self.window_spin.valueChanged.connect(self.update_neuseg_parameters)
         self.window_spin.setToolTip("""
@@ -479,14 +489,25 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.mi_spins = []
         self.mx_spins = []
+        self.checkboxs = []
         names = ['Cell Density', 'Cell Area', 'Cell Intensity']
+        #colors = ['red', 'green', 'blue']
+        colors = ['cyan', 'magenta', 'yellow']
         for i in range(3):
             layout = QtWidgets.QHBoxLayout()
             self.parameters_layout.addLayout(layout)
+            label = QtWidgets.QLabel(f'{names[i]} Range')
+            label.setStyleSheet(f"background-color: {colors[i]}; color: black")
+            layout.addWidget(label)
 
+            checkbox = QtWidgets.QCheckBox()
+            layout.addWidget(checkbox)
+            checkbox.setChecked(True)            
+            checkbox.stateChanged.connect(self.update_neuseg_parameters)
+            self.checkboxs.append(checkbox)
+            
             x = QtWidgets.QDoubleSpinBox()
-            layout.addWidget(QtWidgets.QLabel(f'{names[i]} Range'))
-            layout.addWidget(x)
+            #layout.addWidget(x)
             self.mi_spins.append(x)
             x.setMinimum(-10.0)
             x.setValue(-1.0)
@@ -497,18 +518,21 @@ class MainWindow(QtWidgets.QMainWindow):
             """)
 
             x = QtWidgets.QDoubleSpinBox()
-            layout.addWidget(x)
+            #layout.addWidget(x)
             self.mx_spins.append(x)
-            x.setValue(+1.0)
+            x.setValue(+2.0)
             x.setSingleStep(self.RNG_SPIN_STEP)
             x.valueChanged.connect(self.update_neuseg_parameters)
             x.setToolTip("""
             Num. of Stddevs above the mean
             """)
+
+        self.length_layout = QtWidgets.QHBoxLayout()
+        self.interactive_layout.addLayout(self.length_layout)
         
         self.length_spin = QtWidgets.QSpinBox()
-        self.interactive_layout.addWidget(QtWidgets.QLabel('Cortical Segmentation Length (microns)'))
-        self.interactive_layout.addWidget(self.length_spin)
+        self.length_layout.addWidget(QtWidgets.QLabel('Cortical Segmentation Length (microns)'))
+        self.length_layout.addWidget(self.length_spin)
         self.length_spin.setRange(100, 3000)
         self.length_spin.setValue(1000)
         self.length_spin.setSingleStep(500)
@@ -535,6 +559,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.roi_widget.plot_cs_curves()
 
     def update_neuseg_parameters(self):
+        self.logger.data['show_density'] = self.checkboxs[0].isChecked()
+        self.logger.data['show_area'] = self.checkboxs[1].isChecked()
+        self.logger.data['show_intensity'] = self.checkboxs[2].isChecked()        
         for i in range(3):
             self.neuseg_widget.heatmap_mi[i] = self.mi_spins[i].value()
             self.neuseg_widget.heatmap_mx[i] = self.mx_spins[i].value()
@@ -598,7 +625,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    tmp_directory = None
+    tmp_directory = './tmp'
     parameters_path = ""
     window = MainWindow(tmp_directory=tmp_directory, parameters_path=parameters_path)
     app.exec()
