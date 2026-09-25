@@ -5,7 +5,7 @@ import time
 
 os.environ["QT_API"] = "PyQt6"
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtWidgets, QtGui
 
 
 import tempfile
@@ -36,13 +36,13 @@ class MainWindow(QtWidgets.QMainWindow):
     RNG_SPIN_STEP = 0.5
     RESOURCE_PATH = os.path.join(os.path.dirname(__file__), "resources")
 
-    def __init__(self, tmp_directory=None, parameters_path="", *args, **kwargs):
+    def __init__(self, base_tmp=None, parameters_path="", *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if tmp_directory is None:
+        if base_tmp is None:
             self.temp_directory = tempfile.TemporaryDirectory()
-            self.tmp_directory = self.temp_directory.name
+            self.base_tmp = self.temp_directory.name
         else:        
-            self.tmp_directory = tmp_directory
+            self.base_tmp = base_tmp
         self.parameters_path = parameters_path
         
         self.widget = QtWidgets.QWidget()
@@ -57,14 +57,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slide_layout = QtWidgets.QHBoxLayout()
         self.thumbnail_layout.addLayout(self.slide_layout)
 
-        self.tau_button = QtWidgets.QPushButton('Tau Pathology (AT8)')
-        self.slide_layout.addWidget(self.tau_button)        
-        self.tau_button.clicked.connect(self.load_tau_slide)
-
-        self.neuron_button = QtWidgets.QPushButton('Neuronal (SMI32)')
-        self.slide_layout.addWidget(self.neuron_button)
-        self.neuron_button.clicked.connect(self.load_neuron_slide)
-        # self.neuron_button.setEnabled(False)
+        self.file_menu = QtWidgets.QMenu('File')
+        self.menuBar().addMenu(self.file_menu)
+        self.open_act = QtGui.QAction('Open Slide')
+        self.open_act.triggered.connect(self.open_slide)
+        self.file_menu.addAction(self.open_act)
+        self.open_tau_act = QtGui.QAction('Open Demo Slide')
+        self.open_tau_act.triggered.connect(self.load_tau_slide)
+        self.file_menu.addAction(self.open_tau_act)
         
         self.button_layout = QtWidgets.QHBoxLayout()
         self.thumbnail_layout.addLayout(self.button_layout)
@@ -166,7 +166,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def automate_start(self):
         pass
         self.showMaximized()
-        self.tau_button.click()
+        self.open_tau_act.trigger()
         #self.dab_button.click()
         #self.roi_button.click()
         #self.overlay_button.click()
@@ -178,15 +178,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slide_path = slide_path
         self.slide_name = os.path.splitext(os.path.basename(self.slide_path))[0]
         self.loader = pdnl_sana.slide.Loader(self.logger, self.slide_path)
+        self.tmp_directory = os.path.join(self.base_tmp, self.slide_name)
+        os.makedirs(self.tmp_directory, exist_ok=True)
         self.staining_code = staining_code
         self.thumbnail_widget.set_slide(self.loader)
-
     def load_tau_slide(self):
         slide_path = os.path.join(self.resource_path('.'), self.RESOURCE_PATH, 'tau.tif')
         self.load_slide(slide_path, 'HDAB')
-    def load_neuron_slide(self):
-        slide_path = '/Volumes/noahcapp/smi32.svs'
-        self.load_slide(slide_path, 'HDAB')
+
     def update_frame(self):
         if not self.dab_widget is None:
             loc, size = self.thumbnail_widget.get_rect()
@@ -266,6 +265,12 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(len(curve)):
             record[f'BIN_{i}'] = 100*curve[i]
         self.roi_results.append(record)
+
+    def open_slide(self):
+        dialog = QtWidgets.QFileDialog()
+        slide_name, _ = dialog.getOpenFileName(self, directory="")
+        if slide_name:
+            self.load_slide(slide_name, 'HDAB')
 
     def export_results(self):
         df = pd.DataFrame(self.roi_results)
@@ -625,9 +630,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    tmp_directory = './tmp'
+    base_tmp = './tmp'
     parameters_path = ""
-    window = MainWindow(tmp_directory=tmp_directory, parameters_path=parameters_path)
+    window = MainWindow(base_tmp=base_tmp, parameters_path=parameters_path)
     app.exec()
 
 if __name__ == "__main__":

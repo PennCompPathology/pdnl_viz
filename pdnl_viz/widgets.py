@@ -45,7 +45,7 @@ class MplCanvas(FigureCanvas):
         else:
             self.tmp_directory = tmp_directory
         self.level = 0
-        self.n_cores = 1
+        self.n_cores = 12
         self.frame_size = 2048
 
     def start_tracking(self):
