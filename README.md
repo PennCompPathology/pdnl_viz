@@ -57,9 +57,13 @@ This demo includes a series of visualizations which guide the user through the s
 ### Counterstain Processing
 
 We use the counterstain (in this image hematoxylin) in order to segment Gray Matter from White Matter in the WSI. We generally set the following parameters:
+
 $Strictness=-0.8$, Hematoxylin is fairly specific, so we want to be lenient with thresholding.
+
 $Smoothing=True$, Anisotropic Diffusion filtering smooths out the interiors of neuron and glia cells.
+
 $Background Subtraction=True$, This normalizes the stain such that less background passes through the threshold
+
 $Opening Radius=2 \mu m$, This cleans up some background noise
 
 <img src="docs/counterstain.png" width="600">
