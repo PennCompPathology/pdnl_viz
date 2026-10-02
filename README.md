@@ -5,7 +5,7 @@ This project is an ongoing development of visualization tools used for digital I
 
 ## Requirements
 
-Python3.12 or newer: https://github.com/PackeTsar/Install-Python$0
+Python3.12 or newer: https://github.com/PackeTsar/Install-Python
 
 
 ## Demo Installation (Command Line)
@@ -35,6 +35,8 @@ python -m pip install pdnl_viz
 ```bash
 pdnl_demo
 ```
+
+Note that on the first launch it may take up to a minute for the program to open up. 
 
 ## Troubleshooting
 
